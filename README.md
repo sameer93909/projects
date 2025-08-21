@@ -1,1 +1,1 @@
-# Verilog-project
+# rtl design and its verification
