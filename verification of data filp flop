@@ -1,0 +1,244 @@
+DESIGN CODE:
+
+module dff (dff_if vif);
+  always @(posedge vif.clk)
+    begin
+      if (vif.rst == 1'b1)
+        vif.dout <= 1'b0;
+      else
+        vif.dout <= vif.din;
+    end
+endmodule
+ 
+interface dff_if;
+  logic clk;  
+  logic rst;  
+  logic din;  
+  logic dout;
+endinterface
+
+TESTBENCH CODE:
+
+class transaction;
+  rand bit din;
+  bit dout;
+  
+  function transaction copy();
+    copy=new();
+    copy.din=this.din;
+    copy.dout=this.dout;
+  endfunction
+  
+  function void display(input string tag);
+    $display("[%0s] din:%0d and dout:%0d",tag,din,dout);
+  endfunction
+  
+endclass
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class generator;
+  transaction tr;
+  mailbox #(transaction) mbx;
+  mailbox #(transaction) ref_mbx;
+  int count;
+  event done,next;
+  
+  function new( mailbox #(transaction) mbx,mailbox #(transaction) ref_mbx);
+    this.mbx=mbx;
+    this.ref_mbx=ref_mbx;
+    tr=new();
+  endfunction
+  
+  task gen();
+    repeat(count) begin
+      assert(tr.randomize) else $error("the randomize has been failed");
+      mbx.put(tr.copy);
+      ref_mbx.put(tr.copy);
+      tr.display("gen");
+      @(next);
+    end
+    ->done;
+  endtask
+  
+endclass
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class driver;
+  transaction tr;
+  mailbox #(transaction) mbx;
+  virtual dff_if vif;
+  
+  function new(mailbox #(transaction) mbx);
+    this.mbx=mbx;
+  endfunction
+  
+  task reset();
+    vif.rst<=1'b1;
+    repeat(5) @(posedge vif.clk);
+    vif.rst<=1'b0;
+    $display("the rst is done");
+  endtask
+  
+  task stimuli();
+    forever begin
+    mbx.get(tr);
+    @(posedge vif.clk);
+    vif.din<=tr.din;
+    tr.display("drv");
+    end
+  endtask
+   
+endclass
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class monitor;
+  transaction tr;
+  mailbox #(transaction) mbx;
+  virtual dff_if vif;
+  
+  function new(mailbox #(transaction) mbx);
+    this.mbx=mbx;
+  endfunction
+  
+  task mon();
+    forever begin
+    mbx.put(tr);
+    tr.dout=vif.dout;
+    mbx.put(tr);
+    tr.display("sco");
+    end
+  endtask
+  
+endclass
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class scoreboard;
+  
+  transaction tr;
+  transaction trr;
+  mailbox #(transaction) mbx;
+  mailbox #(transaction) ref_mbx;
+  event next;
+  
+  function new( mailbox #(transaction) mbx,mailbox #(transaction) ref_mbx);
+    this.mbx=mbx;
+    this.ref_mbx=ref_mbx;
+  endfunction
+  
+  task sco();
+    forever begin
+    mbx.get(tr);
+    ref_mbx.get(trr);
+    
+    if(trr.din==tr.dout)
+        $display("the data is match");
+      else 
+        $display("the data is mismatch");
+    
+    ->next;
+    end
+  endtask
+  
+endclass
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class environment;
+  
+  generator gen;
+  driver drv;
+  monitor mon;
+  scoreboard sco;
+  
+  event next;
+  
+  mailbox #(transaction) gd_mbx;
+  mailbox #(transaction) ms_mbx;
+  mailbox #(transaction) gs_mbx;
+  
+  virtual dff_if vif;
+  
+  function new(virtual dff_if vif);
+    
+    gs_mbx=new();
+    gd_mbx=new();
+    ms_mbx=new();
+    
+    gen=new(gd_mbx,gs_mbx);
+    drv=new(gd_mbx);
+    
+    mon=new(ms_mbx);
+    sco=new(ms_mbx,gs_mbx);
+    
+     
+    this.vif=vif;
+    drv.vif=this.vif;
+    mon.vif=this.vif;
+    
+    
+    gen.next=next;
+    sco.next=next;
+    
+    
+  endfunction
+  
+  
+  task pretest();
+      drv.reset();
+    endtask
+    
+    
+    
+   task test();
+     fork
+      gen.gen();
+      drv.stimuli();
+      mon.mon();
+      sco.sco();
+     join_any
+    endtask
+    
+  task posttest();
+    wait(gen.done.triggered);
+    $finish();
+  endtask
+  
+  task all();
+    pretest();
+    test();
+    posttest();
+  endtask
+  
+  
+endclass
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+module tb;
+  
+  environment env;
+  dff_if vif();
+  
+  dff dut (vif);
+  
+  initial begin
+    env=new(vif);
+    env.gen.count=10;
+    env.all();
+  end
+    
+    initial begin
+      $dumpfile("dump.vcd");
+      $dumpvars;
+      
+    end
+    
+  
+  
+  
+  
+endmodule
