@@ -1,0 +1,303 @@
+DESIGN CODE:::::::::::::::
+
+module dff
+  (
+    input clk, rst, din, 
+    output reg dout 
+    
+  );
+  
+  always@(posedge clk)
+    begin
+      if(rst == 1'b1) 
+        dout <= 1'b0;
+      else
+        dout <= din;
+    end
+  
+endmodule
+
+/////////////////////////////////////////////////////////
+interface df();
+  
+  logic clk;
+  logic rst;
+  logic din;
+  logic  dout;
+  
+endinterface
+
+
+
+
+TESTBENCH:::::::::::
+
+`include "uvm_macros.svh"
+import uvm_pkg::*;
+
+
+class transaction extends uvm_sequence_item;
+  
+  rand bit din;
+  bit dout;
+  
+  function new(string inst="tran");
+    super.new(inst);
+  endfunction
+  
+  `uvm_object_utils_begin(transaction);
+  `uvm_field_int(din,UVM_DEFAULT);
+  `uvm_field_int(dout,UVM_DEFAULT);
+  `uvm_object_utils_end
+  
+endclass
+/////////////////////////////////////////////////////////////
+class generator extends uvm_sequence#(transaction);
+  `uvm_object_utils(generator);
+  
+  transaction t;
+ 
+  
+  function new(string inst="gen");
+    super.new(inst);
+  
+  endfunction
+  
+  virtual task body();
+    t=transaction::type_id::create("t");
+    repeat(5) begin
+  
+    start_item(t);
+      assert( t.randomize );
+     `uvm_info("gen",$sformatf("the randomized data   din:%0d",t.din),UVM_NONE);
+    
+    finish_item(t);
+      
+    end
+  endtask
+  
+endclass
+/////////////////////////////////////////////////////////////
+class driver extends uvm_driver#(transaction);
+  `uvm_component_utils(driver);
+  
+  transaction data;
+  virtual df d;
+  
+  function new(string path="drv",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    data=transaction::type_id::create("data",this);
+    
+    if(!uvm_config_db#(virtual df)::get(this,"","if",d))
+    `uvm_error("DRV","Unable to access uvm_config_db");
+  endfunction
+  
+  task reset_db();
+    @(posedge d.clk);
+    d.rst<=1'b1;
+    d.din<=1'b0;
+    d.dout<=1'b0;
+    repeat(5) @(posedge d.clk);
+     d.rst<=1'b0;
+    `uvm_info("drv","reset is done",UVM_NONE);
+  endtask
+  
+  
+  
+  task run_phase(uvm_phase phase);
+    reset_db();
+    
+    forever begin
+    
+     seq_item_port.get_next_item(data);
+ 
+      d.din<=data.din;
+      `uvm_info("drv",$sformatf("the data applied din:%0d dout:%0d",data.din,data.dout),UVM_NONE);
+    
+      seq_item_port.item_done();
+      
+      
+      repeat(2) @(posedge d.clk);
+
+    end
+    
+  endtask
+  
+  
+endclass
+///////////////////////////////////////////////////////////////
+class monitor extends uvm_monitor;
+  `uvm_component_utils(monitor);
+  
+  transaction tr;
+   virtual df d;
+  uvm_analysis_port#(transaction) send;
+  
+  function new(string path="mon",uvm_component parent=null);
+    super.new(path,parent);
+    send=new("send",this);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    tr=transaction::type_id::create("tr");
+    
+    if(!uvm_config_db#(virtual df)::get(this,"","if",d))
+    
+    `uvm_error("mon","Unable to access uvm_config_db");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    @(negedge d.rst);
+    
+    forever begin
+      repeat(2) @(posedge d.clk);
+      tr.din=d.din;
+      tr.dout=d.dout;
+      `uvm_info("mon",$sformatf("received response din:%0d dout:%0d",tr.din,tr.dout),UVM_NONE);
+      send.write(tr);
+    end
+    
+  endtask
+  
+  
+endclass
+////////////////////////////////////////////////////////////////
+class scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(scoreboard);
+  
+  transaction tm;
+  
+  
+
+  uvm_analysis_imp#(transaction,scoreboard) rec;
+  
+  
+  function new(string path="sco",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    tm=transaction::type_id::create("tm");
+    rec=new("rec",this);
+  endfunction
+  
+ 
+  
+  virtual function void write(input transaction tr);
+  tm=tr;
+    `uvm_info("sco",$sformatf("the golden data din:%0d and dut response dout:%0d ",tm.din,tm.dout),UVM_NONE);
+    
+    if(tm.din==tm.dout)
+    $display("the data is matched ");
+    else
+      $display("the data is didn't matched ");
+  endfunction
+ 
+  
+  
+endclass
+////////////////////////////////////////////////////////////////
+class agent extends uvm_agent;
+  `uvm_component_utils(agent);
+  
+  monitor m;
+  driver d;
+  
+  uvm_sequencer#(transaction) seqr;
+  
+  function new(string path="agent",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+   virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+     m=monitor::type_id::create("m",this);
+     d=driver::type_id::create("d",this);
+     seqr=uvm_sequencer#(transaction)::type_id::create("seqr",this);
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    d.seq_item_port.connect(seqr.seq_item_export);
+  endfunction
+    
+  
+endclass
+/////////////////////////////////////////////////////////////////
+class environment extends uvm_env;
+  `uvm_component_utils(environment);
+  
+  scoreboard s;
+  agent a;
+  generator g;
+  
+  function new(string path="env",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+  
+   virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+      g = generator::type_id::create("g", this);
+     s=scoreboard::type_id::create("s",this);
+     a=agent::type_id::create("a",this);
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    a.m.send.connect(s.rec);
+   
+  endfunction
+  
+endclass
+////////////////////////////////////////////////////////////////
+class test extends uvm_test;
+  `uvm_component_utils(test);
+  
+  generator g;
+  environment e;
+  
+  function new(string path="test",uvm_component parent=null);
+    super.new(path,parent);
+  endfunction
+
+  
+   virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+     g=generator::type_id::create("g",this);
+     e=environment::type_id::create("e",this);
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    phase.raise_objection(this);
+    g.start(e.a.seqr);
+    phase.drop_objection(this);
+  endtask
+  
+endclass
+//////////////////////////////////////////////////////////////////
+module tb();
+  df d();
+  
+  initial begin
+    d.rst=0;
+    d.clk=0;
+  end
+  
+  dff dut(.din(d.din),.dout(d.dout),.rst(d.rst),.clk(d.clk));
+  
+  always #5 d.clk=~d.clk;
+  
+    initial begin
+      uvm_config_db#(virtual df)::set(null,"*","if",d);
+      run_test("test");
+    end
+  
+  
+  
+endmodule
