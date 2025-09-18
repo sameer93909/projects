@@ -27,6 +27,16 @@ interface df();
   
 endinterface
 
+/////////////////////////////////////////////////////////
+interface df();
+  
+  logic clk;
+  logic rst;
+  logic din;
+  logic  dout;
+  
+endinterface
+
 
 
 
