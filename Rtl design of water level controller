@@ -1,0 +1,112 @@
+DESIGN CODE///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+module water_level_controller(
+input logic rst,clk,
+input logic low_sensor,mid_sensor,high_sensor,
+output logic motor,led_low, led_mid, led_high
+    );
+    
+typedef enum logic [2:0] {idle=1,motor_on=2,motor_off=3} state_op;
+
+state_op state;
+
+always@(posedge clk) begin    
+ if(rst)
+ begin
+  state<=idle; 
+  led_low  <=1'b0;
+  led_mid  <=1'b0;
+  led_high <=1'b0;
+  motor    <=1'b0;
+ end 
+ else 
+  begin
+  case(state)  
+       
+       idle: begin
+          if(low_sensor) begin
+            state    <=motor_on;
+            led_low  <=1;
+            motor    <=1;
+          end
+       end
+       
+       motor_on:begin
+          if(mid_sensor) begin
+            led_mid  <=1;
+            motor    <=1;
+          end
+          else if(high_sensor)
+           begin
+            led_high <=1;
+            motor    <=0;
+            state    <=motor_off;
+           end 
+      end
+       
+       motor_off:begin
+          if (!high_sensor && !mid_sensor) begin
+               state <= idle;
+          end
+       end
+      
+      default:begin
+        state<=idle;
+      end 
+       
+       
+       
+    endcase 
+   end
+end 
+endmodule
+
+
+
+TEST BENCH////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+module motor_tb();
+
+    
+    reg rst=0,clk=0,low_sensor=0,mid_sensor=0,high_sensor=0;
+    wire motor,led_low, led_mid, led_high;
+    
+   water_level_controller dut (rst,clk,low_sensor,mid_sensor,high_sensor,motor,led_low, led_mid, led_high); 
+    
+   always #5 clk=~clk;
+    
+   initial begin
+    @(posedge clk)
+    rst=1;
+    repeat(5) @(posedge clk)
+    rst=0;
+   end
+    
+   task lowsensor();
+     low_sensor=1;
+     mid_sensor=0;
+     high_sensor=0;
+   endtask 
+   
+   task midsensor();
+     low_sensor=0;
+     mid_sensor=1;
+     high_sensor=0;
+   endtask 
+   
+   task highsensor();
+     low_sensor=0;
+     mid_sensor=0;
+     high_sensor=1;
+   endtask 
+    
+  initial begin
+  #100; lowsensor();
+  #200; midsensor();
+  #300; highsensor();
+  
+  end  
+    
+    
+endmodule
